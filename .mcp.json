@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "google-grounded-search-copilot": {
+      "command": "python3",
+      "args": ["./scripts/google_grounded_search_mcp.py"]
+    }
+  }
+}
