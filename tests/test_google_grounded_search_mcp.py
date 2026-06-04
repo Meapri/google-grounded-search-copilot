@@ -110,6 +110,49 @@ class GoogleGroundedSearchMcpTests(unittest.TestCase):
 
         self.assertEqual(cleaned, "Answer line\nhttps://example.com")
 
+    def test_evidence_extracts_sources_and_numeric_claims(self):
+        mcp = load_mcp()
+        answer = (
+            "RTX Spark has 6,144 CUDA cores, up to 128GB memory, and ships in 2026년 가을. "
+            "Source: https://nvidianews.nvidia.com/news/nvidia-microsoft-windows-pcs-agents-rtx-spark"
+        )
+
+        evidence = mcp.build_evidence(answer, resolve_sources=False)
+
+        self.assertEqual(evidence["sources"][0]["source_type"], "official")
+        self.assertIn("6,144 CUDA", evidence["numeric_claims"])
+        self.assertIn("128GB", evidence["numeric_claims"])
+        self.assertIn("2026년", evidence["numeric_claims"])
+        self.assertEqual(evidence["official_source_count"], 1)
+
+    def test_resolve_url_follows_vertex_redirect(self):
+        mcp = load_mcp()
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def geturl(self):
+                return "https://nvidianews.nvidia.com/news/example"
+
+        with mock.patch.object(mcp.urllib.request.OpenerDirector, "open", return_value=Response()):
+            source = mcp.resolve_url("https://vertexaisearch.cloud.google.com/grounding-api-redirect/example")
+
+        self.assertTrue(source["redirect_resolved"])
+        self.assertEqual(source["resolved_url"], "https://nvidianews.nvidia.com/news/example")
+        self.assertEqual(source["source_type"], "official")
+
+    def test_unresolved_vertex_url_is_not_treated_as_official_source(self):
+        mcp = load_mcp()
+
+        with mock.patch.object(mcp.urllib.request.OpenerDirector, "open", side_effect=TimeoutError("timeout")):
+            source = mcp.resolve_url("https://vertexaisearch.cloud.google.com/grounding-api-redirect/example", timeout_sec=1)
+
+        self.assertEqual(source["source_type"], "grounding_redirect")
+
 
 if __name__ == "__main__":
     unittest.main()

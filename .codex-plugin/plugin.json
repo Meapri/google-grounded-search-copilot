@@ -1,6 +1,6 @@
 {
   "name": "google-grounded-search-copilot",
-  "version": "0.1.0",
+  "version": "0.1.1+codex.20260604132600",
   "description": "Use Hermes Google Antigravity OAuth to run Gemini native Google Search grounding from Codex.",
   "author": {
     "name": "Park Chanwoo",

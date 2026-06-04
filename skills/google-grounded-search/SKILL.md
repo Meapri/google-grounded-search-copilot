@@ -59,3 +59,10 @@ must be copied verbatim. Codex remains responsible for:
 Prefer source URLs from the tool result over generic search snippets. If the
 answer involves substantial spending, legal, medical, financial, or safety
 stakes, be explicit about limits and encourage primary-source confirmation.
+
+When available, inspect `structuredContent.sources` before citing. Prefer
+`resolved_url` over raw `vertexaisearch.cloud.google.com` redirects. Treat
+`quality_signals.official_source_count` and `unresolved_redirect_count` as
+verification hints, not absolute truth. For numbers, dates, specs, prices, and
+release schedules, review `numeric_claims` and verify the important ones against
+official or primary sources before publishing.

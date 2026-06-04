@@ -10,6 +10,8 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.parse
+import urllib.request
 from typing import Any, Dict, List
 
 
@@ -22,6 +24,13 @@ ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 SECRET_RE = re.compile(
     r"(?i)(authorization|bearer|token|refresh_token|access_token|client_secret|cookie|api[_-]?key)"
     r"([:=]\s*)?[^\s]+"
+)
+URL_RE = re.compile(r"https?://[^\s)>\]}\"']+")
+CLAIM_RE = re.compile(
+    r"(?<![\w])(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*"
+    r"(?:GB|TB|MB|GHz|MHz|nm|W|Wh|fps|FPS|코어|core|cores|CUDA|petaflop|Petaflop|"
+    r"페타플롭|parameter|parameters|파라미터|tokens?|토큰|년|월|일|Q[1-4]|%)",
+    re.IGNORECASE,
 )
 
 
@@ -60,6 +69,11 @@ SEARCH_SCHEMA: Dict[str, Any] = {
             "minimum": 20,
             "maximum": 600,
             "default": DEFAULT_TIMEOUT_SEC,
+        },
+        "resolve_sources": {
+            "type": "boolean",
+            "default": True,
+            "description": "Resolve Google grounding redirect URLs to final source URLs.",
         },
     },
     "required": ["query"],
@@ -113,6 +127,116 @@ def clean_output(text: str) -> str:
             continue
         lines.append(raw_line.rstrip())
     return "\n".join(lines).strip()
+
+
+def extract_urls(text: str) -> List[str]:
+    seen = set()
+    urls: List[str] = []
+    for match in URL_RE.finditer(text or ""):
+        url = match.group(0).rstrip(".,;:")
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+    return urls
+
+
+def resolve_url(url: str, *, timeout_sec: int = 8) -> Dict[str, Any]:
+    parsed = urllib.parse.urlparse(url)
+    source: Dict[str, Any] = {
+        "url": url,
+        "resolved_url": url,
+        "domain": parsed.netloc.lower(),
+        "source_type": classify_source(url),
+        "redirect_resolved": False,
+        "resolution_error": "",
+    }
+    if "vertexaisearch.cloud.google.com" not in parsed.netloc.lower():
+        return source
+    try:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": f"{SERVER_NAME}/{SERVER_VERSION}"},
+            method="GET",
+        )
+        opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
+        with opener.open(request, timeout=max(1, timeout_sec)) as response:
+            final_url = response.geturl()
+    except Exception as exc:
+        source["resolution_error"] = redact(exc)
+        return source
+    final_parsed = urllib.parse.urlparse(final_url)
+    source["resolved_url"] = final_url
+    source["domain"] = final_parsed.netloc.lower()
+    source["source_type"] = classify_source(final_url)
+    source["redirect_resolved"] = final_url != url
+    return source
+
+
+def classify_source(url: str) -> str:
+    domain = urllib.parse.urlparse(url).netloc.lower()
+    if domain.startswith("www."):
+        domain = domain[4:]
+    if domain == "vertexaisearch.cloud.google.com":
+        return "grounding_redirect"
+    official_domains = (
+        "google.com",
+        "blog.google",
+        "deepmind.google",
+        "ai.google.dev",
+        "developers.googleblog.com",
+        "nvidia.com",
+        "nvidianews.nvidia.com",
+        "blogs.windows.com",
+        "microsoft.com",
+        "mediatek.com",
+    )
+    community_domains = ("reddit.com", "x.com", "twitter.com", "news.ycombinator.com", "github.com")
+    academic_domains = ("arxiv.org", "nature.com", "science.org", "acm.org", "ieee.org")
+    if any(domain == item or domain.endswith("." + item) for item in official_domains):
+        return "official"
+    if any(domain == item or domain.endswith("." + item) for item in academic_domains):
+        return "academic"
+    if any(domain == item or domain.endswith("." + item) for item in community_domains):
+        return "community"
+    if domain:
+        return "media_or_web"
+    return "unknown"
+
+
+def extract_numeric_claims(text: str) -> List[str]:
+    seen = set()
+    claims: List[str] = []
+    for match in CLAIM_RE.finditer(text or ""):
+        claim = match.group(0).strip()
+        if claim not in seen:
+            seen.add(claim)
+            claims.append(claim)
+    return claims[:40]
+
+
+def build_evidence(answer: str, *, resolve_sources: bool) -> Dict[str, Any]:
+    urls = extract_urls(answer)
+    sources = [
+        resolve_url(url) if resolve_sources else {
+            "url": url,
+            "resolved_url": url,
+            "domain": urllib.parse.urlparse(url).netloc.lower(),
+            "source_type": classify_source(url),
+            "redirect_resolved": False,
+            "resolution_error": "",
+        }
+        for url in urls
+    ]
+    return {
+        "sources": sources,
+        "numeric_claims": extract_numeric_claims(answer),
+        "official_source_count": sum(1 for source in sources if source.get("source_type") == "official"),
+        "unresolved_redirect_count": sum(
+            1
+            for source in sources
+            if "vertexaisearch.cloud.google.com" in urllib.parse.urlparse(source.get("resolved_url", "")).netloc.lower()
+        ),
+    }
 
 
 def hermes_binary() -> str:
@@ -187,10 +311,21 @@ def run_google_grounded_search(arguments: Dict[str, Any]) -> Dict[str, Any]:
             "If auth is missing, run `hermes auth add google-antigravity`. "
             f"Details: {detail}"
         )
+    evidence = build_evidence(stdout, resolve_sources=bool(arguments.get("resolve_sources", True)))
     return {
         "content": [{"type": "text", "text": stdout}],
         "structuredContent": {
             "answer": stdout,
+            "sources": evidence["sources"],
+            "numeric_claims": evidence["numeric_claims"],
+            "quality_signals": {
+                "official_source_count": evidence["official_source_count"],
+                "unresolved_redirect_count": evidence["unresolved_redirect_count"],
+                "source_count": len(evidence["sources"]),
+                "has_resolved_sources": any(
+                    source.get("resolved_url") != source.get("url") for source in evidence["sources"]
+                ),
+            },
             "provider": "google-antigravity",
             "model": model,
             "grounding": "native_google_search",

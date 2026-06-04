@@ -55,8 +55,18 @@ The tool returns the answer text plus structured metadata identifying:
 - grounding: `native_google_search`
 - model used
 - tool suppression policy
+- `sources`: extracted source URLs with Google grounding redirects resolved to
+  final URLs when possible
+- `quality_signals`: source count, official-source count, unresolved redirect
+  count, and whether any source was resolved
+- `numeric_claims`: extracted numeric/spec/date claims for quick manual review
 
 Codex should still review the result before answering the user.
+
+For verification-heavy answers, prefer `structuredContent.sources[].resolved_url`
+over the raw Vertex grounding redirect. Source types are classified as
+`official`, `academic`, `community`, `media_or_web`, `grounding_redirect`, or
+`unknown`.
 
 ## Local Smoke Test
 
