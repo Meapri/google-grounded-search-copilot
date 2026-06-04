@@ -63,6 +63,11 @@ stakes, be explicit about limits and encourage primary-source confirmation.
 When available, inspect `structuredContent.sources` before citing. Prefer
 `resolved_url` over raw `vertexaisearch.cloud.google.com` redirects. Treat
 `quality_signals.official_source_count` and `unresolved_redirect_count` as
-verification hints, not absolute truth. For numbers, dates, specs, prices, and
-release schedules, review `numeric_claims` and verify the important ones against
-official or primary sources before publishing.
+verification hints, not absolute truth. Use `resolved_source_summary` for a
+quick review pass, but cite the resolved URLs themselves. If
+`quality_signals.needs_manual_source_check` is true, say that the sources are
+thin or unresolved instead of presenting the answer as fully verified. For
+numbers, dates, specs, prices, and release schedules, review `numeric_claims`
+and verify the important ones against official or primary sources before
+publishing. If `retry_attempted` is true, check whether the retry produced
+better URLs before citing.

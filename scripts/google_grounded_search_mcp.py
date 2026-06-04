@@ -16,7 +16,7 @@ from typing import Any, Dict, List
 
 
 SERVER_NAME = "google-grounded-search-copilot"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.1.2"
 DEFAULT_MODEL = "gemini-3.5-flash-high"
 DEFAULT_TIMEOUT_SEC = 180
 
@@ -74,6 +74,11 @@ SEARCH_SCHEMA: Dict[str, Any] = {
             "type": "boolean",
             "default": True,
             "description": "Resolve Google grounding redirect URLs to final source URLs.",
+        },
+        "retry_if_missing_sources": {
+            "type": "boolean",
+            "default": True,
+            "description": "Retry once with a stricter prompt when the answer omits direct source URLs.",
         },
     },
     "required": ["query"],
@@ -140,6 +145,46 @@ def extract_urls(text: str) -> List[str]:
     return urls
 
 
+def extract_url_labels(text: str) -> Dict[str, str]:
+    labels: Dict[str, str] = {}
+    for line in (text or "").splitlines():
+        for url in extract_urls(line):
+            prefix = line.split(url, 1)[0]
+            prefix = re.sub(r"^\s*(?:[-*]|\[\d+\]|\d+[.)])\s*", "", prefix)
+            if len(prefix) > 80:
+                prefix = re.split(r"[.!?。]\s+", prefix)[-1]
+            prefix = prefix.strip(" \t:-–—")
+            if prefix and len(prefix) <= 80:
+                labels[url] = prefix
+    return labels
+
+
+def resolve_with_curl(url: str, *, timeout_sec: int) -> str:
+    curl = shutil.which("curl")
+    if not curl:
+        return ""
+    proc = subprocess.run(
+        [
+            curl,
+            "-Ls",
+            "-o",
+            os.devnull,
+            "-w",
+            "%{url_effective}",
+            "--max-time",
+            str(max(1, int(timeout_sec))),
+            url,
+        ],
+        check=False,
+        text=True,
+        capture_output=True,
+        timeout=max(2, int(timeout_sec) + 2),
+    )
+    if proc.returncode != 0:
+        return ""
+    return (proc.stdout or "").strip()
+
+
 def resolve_url(url: str, *, timeout_sec: int = 8) -> Dict[str, Any]:
     parsed = urllib.parse.urlparse(url)
     source: Dict[str, Any] = {
@@ -163,7 +208,10 @@ def resolve_url(url: str, *, timeout_sec: int = 8) -> Dict[str, Any]:
             final_url = response.geturl()
     except Exception as exc:
         source["resolution_error"] = redact(exc)
-        return source
+        final_url = resolve_with_curl(url, timeout_sec=timeout_sec)
+        if not final_url:
+            return source
+        source["resolution_error"] = ""
     final_parsed = urllib.parse.urlparse(final_url)
     source["resolved_url"] = final_url
     source["domain"] = final_parsed.netloc.lower()
@@ -185,6 +233,7 @@ def classify_source(url: str) -> str:
         "ai.google.dev",
         "developers.googleblog.com",
         "nvidia.com",
+        "nvidia.co.kr",
         "nvidianews.nvidia.com",
         "blogs.windows.com",
         "microsoft.com",
@@ -216,6 +265,7 @@ def extract_numeric_claims(text: str) -> List[str]:
 
 def build_evidence(answer: str, *, resolve_sources: bool) -> Dict[str, Any]:
     urls = extract_urls(answer)
+    labels = extract_url_labels(answer)
     sources = [
         resolve_url(url) if resolve_sources else {
             "url": url,
@@ -227,6 +277,8 @@ def build_evidence(answer: str, *, resolve_sources: bool) -> Dict[str, Any]:
         }
         for url in urls
     ]
+    for source in sources:
+        source["label"] = labels.get(source["url"], "")
     return {
         "sources": sources,
         "numeric_claims": extract_numeric_claims(answer),
@@ -237,6 +289,19 @@ def build_evidence(answer: str, *, resolve_sources: bool) -> Dict[str, Any]:
             if "vertexaisearch.cloud.google.com" in urllib.parse.urlparse(source.get("resolved_url", "")).netloc.lower()
         ),
     }
+
+
+def format_resolved_sources(sources: List[Dict[str, Any]]) -> str:
+    if not sources:
+        return ""
+    lines = ["Resolved sources:"]
+    for index, source in enumerate(sources, 1):
+        label = source.get("label") or source.get("domain") or "source"
+        source_type = source.get("source_type") or "unknown"
+        resolved_url = source.get("resolved_url") or source.get("url") or ""
+        suffix = " (unresolved grounding redirect)" if source_type == "grounding_redirect" else ""
+        lines.append(f"{index}. [{source_type}] {label}: {resolved_url}{suffix}")
+    return "\n".join(lines)
 
 
 def hermes_binary() -> str:
@@ -275,15 +340,31 @@ def build_grounded_prompt(arguments: Dict[str, Any]) -> str:
         "Brave, Tavily, browser search, or code-based scraping. Answer in "
         f"{language}. Freshness preference: {freshness}. Include up to {max_sources} "
         "source URLs when available, separate verified facts from inference, and say "
-        "when grounding does not find enough evidence.\n\n"
+        "when grounding does not find enough evidence. End with a Sources section. "
+        "Each source line must include a direct full https:// URL; source titles "
+        "without URLs are not acceptable.\n\n"
         f"Question: {query}"
     )
 
 
-def run_google_grounded_search(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-    timeout_sec = int(arguments.get("timeout_sec") or DEFAULT_TIMEOUT_SEC)
-    prompt = build_grounded_prompt(arguments)
+def build_missing_source_retry_prompt(arguments: Dict[str, Any], previous_answer: str) -> str:
+    query = str(arguments.get("query") or "").strip()
+    max_sources = int(arguments.get("max_sources") or 5)
+    max_sources = max(1, min(max_sources, 10))
+    language = str(arguments.get("language") or "ko").strip() or "ko"
+    return (
+        "Use native Google Search grounding again. The previous answer did not include "
+        "direct source URLs, so this retry must focus on verifiable citations. Answer in "
+        f"{language}. Provide a concise answer and end with exactly {max_sources} or fewer "
+        "source lines. Every source line must contain a direct full https:// URL. Do not "
+        "list source names without URLs. If Google grounding cannot provide direct URLs, "
+        "say that clearly.\n\n"
+        f"Question: {query}\n\n"
+        f"Previous answer without usable URLs:\n{previous_answer[:3000]}"
+    )
+
+
+def run_hermes_chat(model: str, prompt: str, timeout_sec: int) -> subprocess.CompletedProcess[str]:
     command = [
         hermes_binary(),
         "chat",
@@ -302,6 +383,14 @@ def run_google_grounded_search(arguments: Dict[str, Any]) -> Dict[str, Any]:
         timeout=max(20, min(timeout_sec, 600)),
         env=grounded_env(),
     )
+    return proc
+
+
+def run_google_grounded_search(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    model = str(arguments.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    timeout_sec = int(arguments.get("timeout_sec") or DEFAULT_TIMEOUT_SEC)
+    prompt = build_grounded_prompt(arguments)
+    proc = run_hermes_chat(model, prompt, timeout_sec)
     stdout = clean_output(proc.stdout)
     stderr = redact(proc.stderr)
     if proc.returncode != 0:
@@ -312,10 +401,35 @@ def run_google_grounded_search(arguments: Dict[str, Any]) -> Dict[str, Any]:
             f"Details: {detail}"
         )
     evidence = build_evidence(stdout, resolve_sources=bool(arguments.get("resolve_sources", True)))
+    retry_attempted = False
+    if not evidence["sources"] and bool(arguments.get("retry_if_missing_sources", True)):
+        retry_attempted = True
+        retry_prompt = build_missing_source_retry_prompt(arguments, stdout)
+        retry_proc = run_hermes_chat(model, retry_prompt, timeout_sec)
+        retry_stdout = clean_output(retry_proc.stdout)
+        retry_stderr = redact(retry_proc.stderr)
+        if retry_proc.returncode == 0:
+            retry_evidence = build_evidence(retry_stdout, resolve_sources=bool(arguments.get("resolve_sources", True)))
+            if retry_evidence["sources"]:
+                stdout = retry_stdout
+                evidence = retry_evidence
+                stderr = retry_stderr
+        elif not stdout:
+            detail = retry_stderr.strip() or retry_stdout or f"exit code {retry_proc.returncode}"
+            raise RuntimeError(
+                "Hermes google-antigravity grounded search retry failed. "
+                "If auth is missing, run `hermes auth add google-antigravity`. "
+                f"Details: {detail}"
+            )
+    resolved_source_summary = format_resolved_sources(evidence["sources"])
+    content_text = stdout
+    if resolved_source_summary:
+        content_text = f"{stdout}\n\n{resolved_source_summary}"
     return {
-        "content": [{"type": "text", "text": stdout}],
+        "content": [{"type": "text", "text": content_text}],
         "structuredContent": {
             "answer": stdout,
+            "resolved_source_summary": resolved_source_summary,
             "sources": evidence["sources"],
             "numeric_claims": evidence["numeric_claims"],
             "quality_signals": {
@@ -325,10 +439,13 @@ def run_google_grounded_search(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 "has_resolved_sources": any(
                     source.get("resolved_url") != source.get("url") for source in evidence["sources"]
                 ),
+                "needs_manual_source_check": evidence["unresolved_redirect_count"] > 0
+                or evidence["official_source_count"] == 0,
             },
             "provider": "google-antigravity",
             "model": model,
             "grounding": "native_google_search",
+            "retry_attempted": retry_attempted,
             "tool_policy": {
                 "suppress_external_search_tools": True,
                 "suppress_function_tools": True,
