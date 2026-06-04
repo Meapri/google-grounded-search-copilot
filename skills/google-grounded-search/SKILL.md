@@ -1,27 +1,36 @@
 ---
 name: google-grounded-search
-description: "Use proactively for current facts, latest news, source-backed answers, verification, prices, schedules, official-source checks, or any request where Codex should prefer Google-grounded search over DuckDuckGo or generic web search. Uses Hermes google-antigravity OAuth and Gemini native Google Search grounding."
+description: "Default-first search route for modern products, companies, models, hardware/software releases, current facts, latest news, source-backed answers, verification, prices, schedules, official-source checks, or any request where Codex should prefer Google-grounded search over DuckDuckGo or generic web search. Uses Hermes google-antigravity OAuth and Gemini native Google Search grounding."
 ---
 
 # Google Grounded Search
 
 Use this skill when the user asks for current, source-backed, or verification-heavy information.
+When in doubt, use it before answering.
 
 ## When To Use
 
 Use `google_grounded_search` for:
 
 - latest or current information
+- modern named products, chips, GPUs, phones, laptops, apps, services, companies,
+  model names, release names, or newly announced technologies
 - source URLs, citations, or official-source checks
 - fact checking and claim verification
 - prices, schedules, releases, versions, policies, or anything likely to change
+- broad Korean prompts like `<product/company/model>에 대해 알려줘`, because the
+  user usually expects current facts even when `최신` or `검색` is not explicit
 - Korean requests that mention `검색`, `최신`, `출처`, `근거`, `확인`, or `팩트체크`
 
-Do not use it for pure coding, local file work, stable background knowledge, or user requests that explicitly say not to search.
+Do not use it for pure coding, local file work, stable background knowledge,
+creative writing, personal preference questions, or user requests that
+explicitly say not to search.
 
 ## Tool Preference
 
 Prefer the `google_grounded_search` MCP tool from this plugin when available.
+For any modern entity with a meaningful chance of recent changes, call the tool
+first, then synthesize. Do not answer from memory first and search afterward.
 It delegates to Hermes `google-antigravity` and forces Gemini native Google
 Search grounding with external web-search/function tools suppressed.
 

@@ -35,8 +35,11 @@ search, or code-based scraping for the same facts.
 ## Usage
 
 Fresh Codex sessions with this plugin installed expose a `google_grounded_search`
-MCP tool. Use it for current facts, latest news, source-backed answers, claim
-verification, prices, schedules, official-source checks, and similar questions.
+MCP tool. Use it as the default-first route for modern named products,
+companies, model names, hardware/software releases, current facts, latest news,
+source-backed answers, claim verification, prices, schedules, official-source
+checks, and similar questions. Short prompts such as `<product>에 대해 알려줘`
+should still use Google grounding first when the subject may have changed.
 
 Typical tool arguments:
 

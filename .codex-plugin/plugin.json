@@ -1,7 +1,7 @@
 {
   "name": "google-grounded-search-copilot",
-  "version": "0.1.2+codex.20260604135726",
-  "description": "Use Hermes Google Antigravity OAuth to run Gemini native Google Search grounding from Codex.",
+  "version": "0.1.3+codex.20260604140830",
+  "description": "Default-first Google grounded search for modern products, releases, and current source-backed facts in Codex.",
   "author": {
     "name": "Park Chanwoo",
     "url": "https://github.com/Meapri"
@@ -21,8 +21,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Google Grounded Search Copilot",
-    "shortDescription": "Prefer Google-grounded search for current facts and source-backed answers.",
-    "longDescription": "Google Grounded Search Copilot gives Codex a structured MCP tool for source-backed current information. The tool delegates login and token refresh to Hermes' google-antigravity provider, then forces Gemini native Google Search grounding for the search request. Codex should use it for latest/current/search/source/verification questions and keep final judgment, synthesis, and safety boundaries in Codex.",
+    "shortDescription": "Use Google-grounded search first for modern products and current facts.",
+    "longDescription": "Google Grounded Search Copilot gives Codex a structured MCP tool for source-backed current information. The tool delegates login and token refresh to Hermes' google-antigravity provider, then forces Gemini native Google Search grounding for the search request. Codex should use it before answering modern product, company, model, release, latest/current/search/source/verification questions and keep final judgment, synthesis, and safety boundaries in Codex.",
     "developerName": "Park Chanwoo",
     "category": "Productivity",
     "websiteURL": "https://github.com/Meapri/google-grounded-search-copilot",
@@ -33,6 +33,7 @@
       "Local scripts"
     ],
     "defaultPrompt": [
+      "Tell me about this modern product with Google-grounded sources.",
       "Search the latest official sources with Google grounding.",
       "Verify this claim with source URLs.",
       "Summarize current news with citations."
