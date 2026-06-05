@@ -1,5 +1,25 @@
 # Google Grounded Search Copilot
 
+> Deprecated: this Codex plugin has been integrated into
+> [Google Antigravity Codex](https://github.com/Meapri/google-antigravity-codex).
+> This repository is kept for historical reference only.
+
+Use the integrated plugin for Antigravity OAuth, chat, Google-grounded search,
+writing, release drafting, image generation, model listing, and quota checks.
+The new grounded-search tool uses Antigravity directly through its own OAuth and
+MCP server; it does not depend on Hermes provider auth.
+
+```bash
+codex plugin marketplace add Meapri/google-antigravity-codex --ref main
+codex plugin add google-antigravity-codex@google-antigravity-codex
+```
+
+For one-shot agent setup, paste the new repository's
+[Agent Handoff Prompt](https://github.com/Meapri/google-antigravity-codex#agent-handoff-prompt)
+into Codex or another coding agent.
+
+## Historical README
+
 Codex personal plugin that adds a Google-grounded search MCP tool backed by
 Hermes Google Antigravity.
 
